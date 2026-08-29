@@ -1,7 +1,7 @@
 services:
   - type: web
     name: y102os
-    runtime: node
+    env: node
     buildCommand: node --version
     startCommand: npm start
     envVars:
