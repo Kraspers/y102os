@@ -1,0 +1,7 @@
+{
+  "name": "y102os",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  }
+}
