@@ -395,17 +395,17 @@
 
         .window-resize-arc {
             position: fixed;
-            width: 58px;
-            height: 58px;
-            border-top: 10px solid rgba(255, 255, 255, 0.68);
-            border-right: 10px solid rgba(255, 255, 255, 0.68);
-            border-radius: 0 58px 0 0;
-            filter: blur(0.45px);
+            width: 44px;
+            height: 44px;
+            border-top: 7px solid rgba(255, 255, 255, 0.7);
+            border-right: 7px solid rgba(255, 255, 255, 0.7);
+            border-radius: 0 44px 0 0;
+            filter: blur(0.35px);
             opacity: 0;
             pointer-events: none;
-            transform: rotate(var(--arc-rotation, 0deg)) scale(0.78);
+            transform: rotate(var(--arc-rotation, 0deg)) scale(0.82);
             transform-origin: center;
-            transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.1, 0.9, 0.2, 1);
+            transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
             z-index: 100000;
         }
 
@@ -413,20 +413,20 @@
         .window-resize-arc::after {
             content: '';
             position: absolute;
-            width: 10px;
-            height: 10px;
+            width: 7px;
+            height: 7px;
             border-radius: 50%;
-            background: rgba(255, 255, 255, 0.68);
+            background: rgba(255, 255, 255, 0.7);
         }
 
         .window-resize-arc::before {
-            left: -5px;
-            top: -10px;
+            left: -3.5px;
+            top: -7px;
         }
 
         .window-resize-arc::after {
-            right: -10px;
-            bottom: -5px;
+            right: -7px;
+            bottom: -3.5px;
         }
 
         .window-resize-arc.visible {
@@ -891,7 +891,7 @@
         let dragWin = null, resizeWin = null;
         let offX, offY, startW, startH, startX, startY, startLeft, startTop, resizeCorner;
         const MIN_W = 320, MIN_H = 220;
-        const RESIZE_HOVER_DISTANCE = 46;
+        const RESIZE_HOVER_DISTANCE = 38;
         let resizeHoverTarget = null;
         let topWindowZIndex = 10;
         const resizeArc = document.getElementById('windowResizeArc');
@@ -903,10 +903,10 @@
             for (const win of windows) {
                 const rect = win.getBoundingClientRect();
                 const corners = [
-                    { name: 'nw', x: rect.left, y: rect.top, rotation: 180, cursor: 'nwse-resize' },
-                    { name: 'ne', x: rect.right, y: rect.top, rotation: 270, cursor: 'nesw-resize' },
-                    { name: 'se', x: rect.right, y: rect.bottom, rotation: 0, cursor: 'nwse-resize' },
-                    { name: 'sw', x: rect.left, y: rect.bottom, rotation: 90, cursor: 'nesw-resize' },
+                    { name: 'nw', x: rect.left, y: rect.top, rotation: 90, cursor: 'nwse-resize' },
+                    { name: 'ne', x: rect.right, y: rect.top, rotation: 180, cursor: 'nesw-resize' },
+                    { name: 'se', x: rect.right, y: rect.bottom, rotation: 270, cursor: 'nwse-resize' },
+                    { name: 'sw', x: rect.left, y: rect.bottom, rotation: 0, cursor: 'nesw-resize' },
                 ];
                 const corner = corners.find(item => Math.hypot(x - item.x, y - item.y) <= RESIZE_HOVER_DISTANCE);
                 if (corner) return { win, corner };
@@ -915,7 +915,7 @@
         }
 
         function positionResizeArc(target) {
-            const arcSize = 58;
+            const arcSize = 44;
             const halfArc = arcSize / 2;
             const rect = target.win.getBoundingClientRect();
             const positions = {
@@ -1057,7 +1057,7 @@
             resizeWin.style.height = `${newH}px`;
             positionResizeArc({ win: resizeWin, corner: {
                 name: resizeCorner,
-                rotation: { nw: 180, ne: 270, se: 0, sw: 90 }[resizeCorner],
+                rotation: { nw: 90, ne: 180, se: 270, sw: 0 }[resizeCorner],
                 cursor: resizeArc.style.cursor,
             }});
         }
