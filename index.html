@@ -152,7 +152,6 @@
             width: 100% !important;
             height: 100% !important;
             border-radius: 0;
-            z-index: 99999 !important;
         }
 
         .window.maximized {
@@ -826,10 +825,40 @@
         let dragWin = null, resizeWin = null;
         let offX, offY, startW, startH, startX, startY;
         const MIN_W = 320, MIN_H = 220;
+        let topWindowZIndex = 10;
+
+        function bringWindowToFront(win) {
+            if (!win) return;
+            win.style.zIndex = String(++topWindowZIndex);
+        }
+
+        document.addEventListener('mousedown', (event) => {
+            bringWindowToFront(event.target.closest('.window'));
+        });
+
+        window.addEventListener('message', (event) => {
+            const frame = [...document.querySelectorAll('.window iframe')]
+                .find((item) => item.contentWindow === event.source);
+            if (!frame || !event.data || event.data.type !== 'yos-proxy-event') return;
+
+            const win = frame.closest('.window');
+            bringWindowToFront(win);
+
+            if (event.data.event === 'pointermove' && window.matchMedia('(min-width: 769px)').matches) {
+                const frameRect = frame.getBoundingClientRect();
+                mouseX = frameRect.left + event.data.x;
+                mouseY = frameRect.top + event.data.y;
+                updateCursorTransform();
+                cursor.style.opacity = '1';
+            }
+
+            if (event.data.event === 'pointerleave') cursor.style.opacity = '0';
+        });
 
         function startDrag(e, appId) {
             if (e.button !== 0) return;
             const win = document.getElementById(`win-${appId}`);
+            bringWindowToFront(win);
             if (win.classList.contains('maximized')) return;
             dragWin = win;
             dragWin.classList.add('no-anim');
@@ -889,11 +918,13 @@
             if (!win.classList.contains('active-win')) {
                 win.style.display = 'flex';
                 setTimeout(() => win.classList.add('active-win'), 10);
+                bringWindowToFront(win);
                 dockItem.classList.add('open');
                 dockItem.classList.remove('minimized');
             } else if (dockItem.classList.contains('minimized')) {
                 win.style.display = 'flex';
                 setTimeout(() => win.classList.add('active-win'), 10);
+                bringWindowToFront(win);
                 dockItem.classList.remove('minimized');
             } else {
                 minimizeWindow(appId);
@@ -1279,16 +1310,12 @@
 
             const frame = win.querySelector('iframe');
             frame.addEventListener('load', () => {
-                try {
-                    const doc = frame.contentDocument;
-                    if (doc) {
-                        const style = doc.createElement('style');
-                        style.textContent = '*{cursor:none !important;}';
-                        doc.head.appendChild(style);
-                    }
-                } catch (err) {
-                    // Кросс-доменный документ — курсор внутри него браузер не позволяет заменить
-                }
+                const doc = frame.contentDocument;
+                if (!doc || doc.getElementById('yos-hide-system-cursor')) return;
+                const style = doc.createElement('style');
+                style.id = 'yos-hide-system-cursor';
+                style.textContent = '* { cursor: none !important; }';
+                (doc.head || doc.documentElement).appendChild(style);
             });
 
             // Скрытый (пока не открыт) элемент дока — появится плавно при первом открытии
