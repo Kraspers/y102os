@@ -65,6 +65,14 @@ function proxyTargetUrl(value, target, proxyOrigin) {
   }
 }
 
+function rewriteCssUrls(css, target, proxyOrigin) {
+  return css.replace(/@import\s+(["'])([^"']+)\1/gi, (match, quote, value) => {
+    return `@import ${quote}${proxyTargetUrl(value, target, proxyOrigin)}${quote}`;
+  }).replace(/url\(\s*(["']?)([^"'()]+)\1\s*\)/gi, (match, quote, value) => {
+    return `url(${quote}${proxyTargetUrl(value.trim(), target, proxyOrigin)}${quote})`;
+  });
+}
+
 function rewriteHtmlUrls(html, target, proxyOrigin) {
   return html.replace(/\b(src|href|action|poster)\s*=\s*(["'])(.*?)\2/gi, (match, name, quote, value) => {
     return `${name}=${quote}${proxyTargetUrl(value, target, proxyOrigin)}${quote}`;
@@ -75,7 +83,9 @@ function rewriteHtmlUrls(html, target, proxyOrigin) {
     }).join(', ');
     return `srcset=${quote}${srcset}${quote}`;
   }).replace(/(<meta\s+[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["']?\s*\d+\s*;\s*url\s*=\s*)([^"' >]+)/gi,
-    (match, prefix, value) => `${prefix}${proxyTargetUrl(value, target, proxyOrigin)}`);
+    (match, prefix, value) => `${prefix}${proxyTargetUrl(value, target, proxyOrigin)}`)
+    .replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (match, open, css, close) => `${open}${rewriteCssUrls(css, target, proxyOrigin)}${close}`)
+    .replace(/\bstyle\s*=\s*(["'])([\s\S]*?)\1/gi, (match, quote, css) => `style=${quote}${rewriteCssUrls(css, target, proxyOrigin)}${quote}`);
 }
 
 function injectNavigation(html, target) {
@@ -124,7 +134,9 @@ function handleProxy(req, res, target, attempt = 0) {
     if (upstreamRes.headers.location) responseHeaders.location = proxyUrl(new URL(upstreamRes.headers.location, target).href);
     if (upstreamRes.headers['set-cookie']) responseHeaders['set-cookie'] = proxyCookies(upstreamRes.headers['set-cookie']);
     const contentType = String(upstreamRes.headers['content-type'] || '');
-    if (!contentType.includes('text/html')) {
+    const isHtml = contentType.toLowerCase().includes('text/html');
+    const isCss = contentType.toLowerCase().includes('text/css');
+    if (!isHtml && !isCss) {
       if (upstreamRes.headers['content-encoding']) responseHeaders['content-encoding'] = upstreamRes.headers['content-encoding'];
       res.writeHead(upstreamRes.statusCode || 502, responseHeaders);
       return upstreamRes.pipe(res);
@@ -138,7 +150,8 @@ function handleProxy(req, res, target, attempt = 0) {
       const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0];
       const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
       const proxyOrigin = `${protocol}://${req.headers.host}`;
-      res.end(injectNavigation(rewriteHtmlUrls(html, target, proxyOrigin), target));
+      const rewritten = isCss ? rewriteCssUrls(html, target, proxyOrigin) : rewriteHtmlUrls(html, target, proxyOrigin);
+      res.end(isHtml ? injectNavigation(rewritten, target) : rewritten);
     });
   });
   upstream.setTimeout(20_000, () => upstream.destroy(new Error('ETIMEDOUT')));
