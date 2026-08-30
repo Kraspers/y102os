@@ -55,9 +55,25 @@ function proxyCookies(cookies) {
     .replace(/;\s*path=[^;]*/ig, '; Path=/proxy'));
 }
 
+function proxyTargetUrl(value, target) {
+  if (!value || value.startsWith('#') || /^(?:data|blob|javascript|mailto|tel):/i.test(value)) return value;
+  try {
+    const url = new URL(value, target);
+    return isAllowedTarget(url) ? proxyUrl(url.href) : value;
+  } catch {
+    return value;
+  }
+}
+
+function rewriteHtmlUrls(html, target) {
+  return html.replace(/\b(src|href|action|poster)\s*=\s*(["'])(.*?)\2/gi, (match, name, quote, value) => {
+    return `${name}=${quote}${proxyTargetUrl(value, target)}${quote}`;
+  });
+}
+
 function injectNavigation(html, target) {
   const base = `<base href="${target.href}">`;
-  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const u=v=>p+encodeURIComponent(new URL(v,document.baseURI).href);const navigate=v=>{location.href=u(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=u(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
+  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const proxy=v=>{try{const url=new URL(v,document.baseURI);return /^https?:$/.test(url.protocol)?p+encodeURIComponent(url.href):v}catch{return v}};const navigate=v=>{location.href=proxy(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=proxy(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};const fetch=window.fetch;window.fetch=(input,init)=>{if(typeof input==='string'||input instanceof URL)return fetch(proxy(input),init);if(input instanceof Request)return fetch(new Request(proxy(input.url),input),init);return fetch(input,init)};const open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...args){return open.call(this,method,proxy(url),...args)};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
   if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${base}${script}`);
   return `${base}${script}${html}`;
 }
@@ -98,7 +114,7 @@ function handleProxy(req, res, target, attempt = 0) {
       const html = decodeHtml(Buffer.concat(chunks), upstreamRes.headers['content-encoding']).toString('utf8');
       responseHeaders['content-type'] = contentType || 'text/html; charset=utf-8';
       res.writeHead(upstreamRes.statusCode || 200, responseHeaders);
-      res.end(injectNavigation(html, target));
+      res.end(injectNavigation(rewriteHtmlUrls(html, target), target));
     });
   });
   upstream.setTimeout(20_000, () => upstream.destroy(new Error('ETIMEDOUT')));
