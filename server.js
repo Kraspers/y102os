@@ -38,6 +38,23 @@ function isAllowedTarget(target) {
   return host !== 'localhost' && host !== '::1' && host !== '127.0.0.1' && !host.endsWith('.localhost');
 }
 
+function getProxiedRoute(req, requestUrl) {
+  try {
+    const referer = new URL(req.headers.referer);
+    if (referer.pathname !== '/proxy') return null;
+    const target = new URL(referer.searchParams.get('url'));
+    return new URL(`${requestUrl.pathname}${requestUrl.search}`, target);
+  } catch {
+    return null;
+  }
+}
+
+function proxyCookies(cookies) {
+  return cookies.map(cookie => cookie
+    .replace(/;\s*domain=[^;]*/ig, '')
+    .replace(/;\s*path=[^;]*/ig, '; Path=/proxy'));
+}
+
 function injectNavigation(html, target) {
   const base = `<base href="${target.href}">`;
   const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const u=v=>p+encodeURIComponent(new URL(v,document.baseURI).href);const navigate=v=>{location.href=u(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=u(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
@@ -68,6 +85,7 @@ function handleProxy(req, res, target, attempt = 0) {
       if (!blockedHeaders.has(name.toLowerCase())) responseHeaders[name] = value;
     }
     if (upstreamRes.headers.location) responseHeaders.location = proxyUrl(new URL(upstreamRes.headers.location, target).href);
+    if (upstreamRes.headers['set-cookie']) responseHeaders['set-cookie'] = proxyCookies(upstreamRes.headers['set-cookie']);
     const contentType = String(upstreamRes.headers['content-type'] || '');
     if (!contentType.includes('text/html')) {
       if (upstreamRes.headers['content-encoding']) responseHeaders['content-encoding'] = upstreamRes.headers['content-encoding'];
@@ -97,7 +115,11 @@ function handleProxy(req, res, target, attempt = 0) {
 
 http.createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (requestUrl.pathname !== '/proxy') return serveStatic(req, res, requestUrl.pathname);
+  if (requestUrl.pathname !== '/proxy') {
+    const target = getProxiedRoute(req, requestUrl);
+    if (target && isAllowedTarget(target)) return res.writeHead(302, { location: proxyUrl(target.href) }).end();
+    return serveStatic(req, res, requestUrl.pathname);
+  }
   const value = requestUrl.searchParams.get('url');
   let target;
   try { target = new URL(value); } catch { return res.writeHead(400).end('Некорректная ссылка.'); }
