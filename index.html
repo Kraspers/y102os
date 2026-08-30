@@ -234,16 +234,29 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 18px;
             background: rgba(255, 255, 255, 0.22);
             backdrop-filter: blur(2px);
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.25s ease;
             z-index: 2;
+            text-align: center;
+            font-family: Arial, sans-serif;
+            font-weight: 700;
+            color: #000;
         }
 
+        .app-loading-overlay::after { content: ''; }
         .window-content.is-loading iframe { filter: blur(8px); }
         .window-content.is-loading .app-loading-overlay { opacity: 1; }
+        .window-content.has-load-error .app-loading-overlay {
+            background: rgba(255, 255, 255, 0.9);
+            opacity: 1;
+        }
+        .window-content.has-load-error .app-loading-overlay::after {
+            content: attr(data-error-message);
+        }
 
         /* --- ИНТЕРФЕЙС NEXA AI --- */
         #win-app1 .window-content {
@@ -854,6 +867,39 @@
             win.style.zIndex = String(++topWindowZIndex);
         }
 
+        function setFrameLoading(frame, loading) {
+            const content = frame?.closest('.window-content');
+            if (!content) return;
+            content.classList.toggle('is-loading', loading);
+            if (loading) {
+                content.classList.remove('has-load-error');
+                clearTimeout(Number(frame.dataset.loadTimer || 0));
+                frame.dataset.loadTimer = String(setTimeout(() => {
+                    content.classList.remove('is-loading');
+                    content.classList.add('has-load-error');
+                    content.dataset.errorMessage = 'Сайт не ответил вовремя или блокирует загрузку в окне приложения.';
+                }, 15000));
+            } else {
+                clearTimeout(Number(frame.dataset.loadTimer || 0));
+                frame.dataset.loadTimer = '';
+            }
+        }
+
+        function bindFrameLoadState(frame) {
+            if (!frame || frame.dataset.loadStateBound === 'true') return;
+            frame.dataset.loadStateBound = 'true';
+            setFrameLoading(frame, true);
+            frame.addEventListener('load', () => setFrameLoading(frame, false));
+            frame.addEventListener('error', () => {
+                const content = frame.closest('.window-content');
+                setFrameLoading(frame, false);
+                content?.classList.add('has-load-error');
+                if (content) content.dataset.errorMessage = 'Не удалось загрузить сайт.';
+            });
+        }
+
+        document.querySelectorAll('.window iframe').forEach(bindFrameLoadState);
+
         document.addEventListener('mousedown', (event) => {
             bringWindowToFront(event.target.closest('.window'));
         });
@@ -864,7 +910,7 @@
             if (!frame || !event.data) return;
 
             if (event.data.type === 'yos-proxy-loading') {
-                frame.closest('.window-content').classList.toggle('is-loading', event.data.loading);
+                setFrameLoading(frame, event.data.loading);
                 return;
             }
             if (event.data.type !== 'yos-proxy-event') return;
@@ -1342,6 +1388,7 @@
                 <div class="resize-handle" onmousedown="startResize(event, '${appId}')"></div>
             `;
             desktop.appendChild(win);
+            bindFrameLoadState(win.querySelector('iframe'));
 
             // Скрытый (пока не открыт) элемент дока — появится плавно при первом открытии
             const dockItem = document.createElement('div');
