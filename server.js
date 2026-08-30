@@ -112,6 +112,13 @@ function serveStatic(req, res, pathname) {
   });
 }
 
+function getHttpsFallback(target) {
+  if (target.protocol !== 'http:') return null;
+  const fallback = new URL(target.href);
+  fallback.protocol = 'https:';
+  return fallback;
+}
+
 function handleProxy(req, res, target, attempt = 0) {
   const client = target.protocol === 'https:' ? https : http;
   const headers = { ...req.headers, host: target.host, 'accept-encoding': 'identity' };
@@ -146,6 +153,10 @@ function handleProxy(req, res, target, attempt = 0) {
     const transient = new Set(['ECONNREFUSED', 'ECONNRESET', 'EAI_AGAIN', 'ETIMEDOUT']);
     if (!res.headersSent && attempt === 0 && ['GET', 'HEAD'].includes(req.method) && transient.has(error.code)) {
       return handleProxy(req, res, target, attempt + 1);
+    }
+    const httpsFallback = getHttpsFallback(target);
+    if (!res.headersSent && httpsFallback && ['GET', 'HEAD'].includes(req.method)) {
+      return handleProxy(req, res, httpsFallback, attempt + 1);
     }
     if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Не удалось подключиться к сайту.');
