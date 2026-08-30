@@ -1312,6 +1312,8 @@
             desktop.appendChild(win);
 
             const frame = win.querySelector('iframe');
+            frame.addEventListener('mouseenter', () => { cursor.style.opacity = '0'; });
+            frame.addEventListener('mouseleave', () => { cursor.style.opacity = '0'; });
             frame.addEventListener('load', () => {
                 const doc = frame.contentDocument;
                 if (!doc || doc.getElementById('yos-hide-system-cursor')) return;
