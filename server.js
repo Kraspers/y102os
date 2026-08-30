@@ -2,6 +2,7 @@ const http = require('node:http');
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const root = __dirname;
 const port = Number(process.env.PORT) || 3000;
@@ -16,6 +17,19 @@ const blockedHeaders = new Set([
 
 function proxyUrl(url) {
   return `/proxy?url=${encodeURIComponent(url)}`;
+}
+
+function decodeHtml(body, contentEncoding) {
+  try {
+    switch (String(contentEncoding || '').toLowerCase()) {
+      case 'br': return zlib.brotliDecompressSync(body);
+      case 'gzip': return zlib.gunzipSync(body);
+      case 'deflate': return zlib.inflateSync(body);
+      default: return body;
+    }
+  } catch {
+    return body;
+  }
 }
 
 function isAllowedTarget(target) {
@@ -56,15 +70,17 @@ function handleProxy(req, res, target, attempt = 0) {
     if (upstreamRes.headers.location) responseHeaders.location = proxyUrl(new URL(upstreamRes.headers.location, target).href);
     const contentType = String(upstreamRes.headers['content-type'] || '');
     if (!contentType.includes('text/html')) {
+      if (upstreamRes.headers['content-encoding']) responseHeaders['content-encoding'] = upstreamRes.headers['content-encoding'];
       res.writeHead(upstreamRes.statusCode || 502, responseHeaders);
       return upstreamRes.pipe(res);
     }
     const chunks = [];
     upstreamRes.on('data', chunk => chunks.push(chunk));
     upstreamRes.on('end', () => {
+      const html = decodeHtml(Buffer.concat(chunks), upstreamRes.headers['content-encoding']).toString('utf8');
       responseHeaders['content-type'] = contentType || 'text/html; charset=utf-8';
       res.writeHead(upstreamRes.statusCode || 200, responseHeaders);
-      res.end(injectNavigation(Buffer.concat(chunks).toString('utf8'), target));
+      res.end(injectNavigation(html, target));
     });
   });
   upstream.setTimeout(20_000, () => upstream.destroy(new Error('ETIMEDOUT')));
