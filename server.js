@@ -26,7 +26,7 @@ function isAllowedTarget(target) {
 
 function injectNavigation(html, target) {
   const base = `<base href="${target.href}">`;
-  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const u=v=>p+encodeURIComponent(new URL(v,document.baseURI).href);const navigate=v=>{location.href=u(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=u(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
+  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const u=v=>p+encodeURIComponent(new URL(v,document.baseURI).href);const navigate=v=>{location.href=u(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=u(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const hideCursor=()=>{if(document.getElementById('yos-hide-system-cursor'))return;const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='html,body,body *{cursor:none !important}';(document.head||document.documentElement).appendChild(style)};hideCursor();new MutationObserver(hideCursor).observe(document.documentElement,{childList:true,subtree:true});window.addEventListener('pointermove',e=>send('pointermove',e),true);window.addEventListener('pointerdown',e=>send('pointerdown',e),true);window.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
   if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${base}${script}`);
   return `${base}${script}${html}`;
 }
@@ -44,7 +44,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function handleProxy(req, res, target) {
+function handleProxy(req, res, target, attempt = 0) {
   const client = target.protocol === 'https:' ? https : http;
   const headers = { ...req.headers, host: target.host, 'accept-encoding': 'identity' };
   delete headers.origin;
@@ -67,8 +67,16 @@ function handleProxy(req, res, target) {
       res.end(injectNavigation(Buffer.concat(chunks).toString('utf8'), target));
     });
   });
-  upstream.on('error', () => res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('Не удалось подключиться к сайту.'));
-  req.pipe(upstream);
+  upstream.setTimeout(20_000, () => upstream.destroy(new Error('ETIMEDOUT')));
+  upstream.on('error', error => {
+    const transient = new Set(['ECONNREFUSED', 'ECONNRESET', 'EAI_AGAIN', 'ETIMEDOUT']);
+    if (!res.headersSent && attempt === 0 && ['GET', 'HEAD'].includes(req.method) && transient.has(error.code)) {
+      return handleProxy(req, res, target, attempt + 1);
+    }
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Не удалось подключиться к сайту.');
+  });
+  if (attempt === 0) req.pipe(upstream); else upstream.end();
 }
 
 http.createServer((req, res) => {
