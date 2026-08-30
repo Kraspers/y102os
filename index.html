@@ -1343,7 +1343,6 @@
             if (item && !item.classList.contains('revealed')) {
                 item.classList.add('revealed');
                 requestAnimationFrame(() => {
-                    item.style.display = 'flex';
                     requestAnimationFrame(() => {
                         item.style.width = '48px';
                         item.style.opacity = '1';
