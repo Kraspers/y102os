@@ -1285,6 +1285,16 @@
                         const style = doc.createElement('style');
                         style.textContent = '*{cursor:none !important;}';
                         doc.head.appendChild(style);
+
+                        // События мыши из iframe не всплывают в родительский документ.
+                        // Передаём координаты наверх, чтобы курсор продолжал следовать за мышью
+                        // и внутри окна приложения.
+                        doc.addEventListener('mousemove', (e) => {
+                            mouseX = e.clientX;
+                            mouseY = e.clientY;
+                            updateCursorTransform();
+                            cursor.style.opacity = '1';
+                        });
                     }
                 } catch (err) {
                     // Кросс-доменный документ — курсор внутри него браузер не позволяет заменить
