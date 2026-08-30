@@ -119,6 +119,13 @@ function proxyErrorPage(target, message) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;font:16px Arial,sans-serif;color:#000}.box{max-width:520px;padding:24px;text-align:center}.url{margin-top:12px;overflow-wrap:anywhere;color:#555}</style><script>window.parent&&window.parent.postMessage({type:'yos-proxy-loading',loading:false},location.origin)</script></head><body><div class="box"><strong>${safeMessage}</strong><div class="url">${safeTarget}</div></div></body></html>`;
 }
 
+function getHttpsFallbackTarget(target) {
+  if (target.protocol !== 'http:' || !target.hostname.toLowerCase().endsWith('.tilda.ws')) return null;
+  const fallback = new URL(target.href);
+  fallback.protocol = 'https:';
+  return fallback;
+}
+
 function handleProxy(req, res, target, attempt = 0) {
   const client = target.protocol === 'https:' ? https : http;
   const headers = {
@@ -131,6 +138,13 @@ function handleProxy(req, res, target, attempt = 0) {
   };
   delete headers.origin;
   const upstream = client.request(target, { method: req.method, headers }, upstreamRes => {
+    const fallbackTarget = getHttpsFallbackTarget(target);
+    if ([403, 404, 502, 503, 504].includes(upstreamRes.statusCode || 0) && fallbackTarget) {
+      res.writeHead(302, { location: proxyUrl(fallbackTarget.href) });
+      upstreamRes.resume();
+      return;
+    }
+
     const responseHeaders = {};
     for (const [name, value] of Object.entries(upstreamRes.headers)) {
       if (!blockedHeaders.has(name.toLowerCase())) responseHeaders[name] = value;
@@ -160,6 +174,11 @@ function handleProxy(req, res, target, attempt = 0) {
     const transient = new Set(['ECONNREFUSED', 'ECONNRESET', 'EAI_AGAIN', 'ETIMEDOUT']);
     if (!res.headersSent && attempt === 0 && ['GET', 'HEAD'].includes(req.method) && transient.has(error.code)) {
       return handleProxy(req, res, target, attempt + 1);
+    }
+    const fallbackTarget = getHttpsFallbackTarget(target);
+    if (!res.headersSent && fallbackTarget) {
+      res.writeHead(302, { location: proxyUrl(fallbackTarget.href) });
+      return res.end();
     }
     if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' });
     res.end(proxyErrorPage(target, 'Не удалось подключиться к сайту. Возможно, сайт не опубликован, временно недоступен или блокирует загрузку через прокси.'));
