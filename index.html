@@ -12,6 +12,14 @@
             padding: 0;
             box-sizing: border-box;
             box-shadow: none !important;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+
+        *::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
         }
 
         body, html {
@@ -645,7 +653,7 @@
         
         <div class="window maximized" id="win-app1" style="display: none;">
             <div class="window-header" onmousedown="startDrag(event, 'app1')">
-                <div class="window-title">Nexa Ai</div>
+                <div class="window-title" onclick="refreshWindow('app1')">Nexa Ai</div>
                 <div class="window-controls">
                     <button class="win-btn win-btn-min" onclick="minimizeWindow('app1')">
                         <svg viewBox="0 0 24 24" fill="none"><line x1="5" y1="12" x2="19" y2="12" stroke-linecap="round"/></svg>
@@ -681,7 +689,7 @@
 
         <div class="window" id="win-app2">
             <div class="window-header" onmousedown="startDrag(event, 'app2')">
-                <div class="window-title">Приложение 2</div>
+                <div class="window-title" onclick="refreshWindow('app2')">Приложение 2</div>
                 <div class="window-controls">
                     <button class="win-btn win-btn-min" onclick="minimizeWindow('app2')">
                         <svg viewBox="0 0 24 24" fill="none"><line x1="5" y1="12" x2="19" y2="12" stroke-linecap="round"/></svg>
@@ -975,6 +983,17 @@
         function maximizeWindow(appId) {
             const win = document.getElementById(`win-${appId}`);
             win.classList.toggle('maximized');
+        }
+
+        function refreshWindow(appId) {
+            const win = document.getElementById(`win-${appId}`);
+            if (!win) return;
+            const frame = win.querySelector('iframe');
+            if (frame) {
+                const content = frame.closest('.window-content');
+                if (content) content.classList.add('is-loading');
+                frame.src = frame.src;
+            }
         }
 
         function closeWindow(appId) {
@@ -1322,7 +1341,7 @@
 
             win.innerHTML = `
                 <div class="window-header" onmousedown="startDrag(event, '${appId}')">
-                    <div class="window-title">${displayUrl}</div>
+                    <div class="window-title" onclick="refreshWindow('${appId}')">${displayUrl}</div>
                     <div class="window-controls">
                         <button class="win-btn win-btn-min" onclick="minimizeWindow('${appId}')">
                             <svg viewBox="0 0 24 24" fill="none"><line x1="5" y1="12" x2="19" y2="12" stroke-linecap="round"/></svg>
