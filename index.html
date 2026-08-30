@@ -838,6 +838,25 @@
             bringWindowToFront(event.target.closest('.window'));
         });
 
+        window.addEventListener('message', (event) => {
+            const frame = [...document.querySelectorAll('.window iframe')]
+                .find((item) => item.contentWindow === event.source);
+            if (!frame || !event.data || event.data.type !== 'yos-proxy-event') return;
+
+            const win = frame.closest('.window');
+            bringWindowToFront(win);
+
+            if (event.data.event === 'pointermove' && window.matchMedia('(min-width: 769px)').matches) {
+                const frameRect = frame.getBoundingClientRect();
+                mouseX = frameRect.left + event.data.x;
+                mouseY = frameRect.top + event.data.y;
+                updateCursorTransform();
+                cursor.style.opacity = '1';
+            }
+
+            if (event.data.event === 'pointerleave') cursor.style.opacity = '0';
+        });
+
         function startDrag(e, appId) {
             if (e.button !== 0) return;
             const win = document.getElementById(`win-${appId}`);
@@ -1291,17 +1310,21 @@
                     </div>
                 </div>
                 <div class="window-content" style="padding: 0; display: flex; flex-direction: column;">
-                    <iframe src="${proxyUrl}" style="flex: 1; width: 100%; border: none;" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
+                    <iframe src="${proxyUrl}" style="flex: 1; width: 100%; border: none; cursor: none;" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
                 </div>
                 <div class="resize-handle" onmousedown="startResize(event, '${appId}')"></div>
             `;
             desktop.appendChild(win);
 
             const frame = win.querySelector('iframe');
-            // The iframe has its own browsing context. Keep the native cursor there:
-            // forwarding pointer coordinates breaks on nested frames such as CAPTCHA widgets.
-            frame.addEventListener('mouseenter', () => { cursor.style.opacity = '0'; });
-            frame.addEventListener('mouseleave', () => { cursor.style.opacity = '1'; });
+            frame.addEventListener('load', () => {
+                const doc = frame.contentDocument;
+                if (!doc || doc.getElementById('yos-hide-system-cursor')) return;
+                const style = doc.createElement('style');
+                style.id = 'yos-hide-system-cursor';
+                style.textContent = '* { cursor: none !important; }';
+                (doc.head || doc.documentElement).appendChild(style);
+            });
 
             // Скрытый (пока не открыт) элемент дока — появится плавно при первом открытии
             const dockItem = document.createElement('div');
