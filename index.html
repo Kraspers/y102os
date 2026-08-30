@@ -395,23 +395,44 @@
 
         .window-resize-arc {
             position: fixed;
-            width: 34px;
-            height: 34px;
-            border: 8px solid rgba(255, 255, 255, 0.62);
-            border-left-color: transparent;
-            border-bottom-color: transparent;
-            border-radius: 50%;
-            filter: blur(0.5px);
+            width: 58px;
+            height: 58px;
+            border-top: 10px solid rgba(255, 255, 255, 0.68);
+            border-right: 10px solid rgba(255, 255, 255, 0.68);
+            border-radius: 0 58px 0 0;
+            filter: blur(0.45px);
             opacity: 0;
             pointer-events: none;
+            transform: rotate(var(--arc-rotation, 0deg)) scale(0.78);
             transform-origin: center;
-            transition: opacity 0.2s ease;
+            transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.1, 0.9, 0.2, 1);
             z-index: 100000;
+        }
+
+        .window-resize-arc::before,
+        .window-resize-arc::after {
+            content: '';
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.68);
+        }
+
+        .window-resize-arc::before {
+            left: -5px;
+            top: -10px;
+        }
+
+        .window-resize-arc::after {
+            right: -10px;
+            bottom: -5px;
         }
 
         .window-resize-arc.visible {
             opacity: 1;
             pointer-events: auto;
+            transform: rotate(var(--arc-rotation, 0deg)) scale(1);
         }
 
 
@@ -870,9 +891,8 @@
         let dragWin = null, resizeWin = null;
         let offX, offY, startW, startH, startX, startY, startLeft, startTop, resizeCorner;
         const MIN_W = 320, MIN_H = 220;
-        const RESIZE_HOVER_DELAY = 1100;
-        const RESIZE_HOVER_DISTANCE = 34;
-        let resizeHoverTimer = null, resizeHoverTarget = null;
+        const RESIZE_HOVER_DISTANCE = 46;
+        let resizeHoverTarget = null;
         let topWindowZIndex = 10;
         const resizeArc = document.getElementById('windowResizeArc');
 
@@ -895,27 +915,25 @@
         }
 
         function positionResizeArc(target) {
-            const offset = 12;
-            const arcSize = 34;
+            const arcSize = 58;
+            const halfArc = arcSize / 2;
             const rect = target.win.getBoundingClientRect();
             const positions = {
-                nw: { left: rect.left - arcSize - offset, top: rect.top - arcSize - offset },
-                ne: { left: rect.right + offset, top: rect.top - arcSize - offset },
-                se: { left: rect.right + offset, top: rect.bottom + offset },
-                sw: { left: rect.left - arcSize - offset, top: rect.bottom + offset },
+                nw: { left: rect.left - halfArc, top: rect.top - halfArc },
+                ne: { left: rect.right - halfArc, top: rect.top - halfArc },
+                se: { left: rect.right - halfArc, top: rect.bottom - halfArc },
+                sw: { left: rect.left - halfArc, top: rect.bottom - halfArc },
             };
             const pos = positions[target.corner.name];
             resizeArc.style.left = `${pos.left}px`;
             resizeArc.style.top = `${pos.top}px`;
-            resizeArc.style.transform = `rotate(${target.corner.rotation}deg)`;
+            resizeArc.style.setProperty('--arc-rotation', `${target.corner.rotation}deg`);
             resizeArc.style.cursor = target.corner.cursor;
             resizeArc.dataset.appId = target.win.id.replace(/^win-/, '');
             resizeArc.dataset.corner = target.corner.name;
         }
 
         function hideResizeArc() {
-            clearTimeout(resizeHoverTimer);
-            resizeHoverTimer = null;
             resizeHoverTarget = null;
             if (!resizeWin) resizeArc.classList.remove('visible');
         }
@@ -923,18 +941,13 @@
         function updateResizeArcHover(x, y) {
             if (dragWin || resizeWin || aiMode || aiSelecting) return hideResizeArc();
             const target = getResizeCornerAt(x, y);
-            if (!target) return hideResizeArc();
-            const key = `${target.win.id}:${target.corner.name}`;
-            if (resizeHoverTarget === key) {
-                if (resizeArc.classList.contains('visible')) positionResizeArc(target);
-                return;
+            if (!target) {
+                if (resizeArc.matches(':hover')) return;
+                return hideResizeArc();
             }
-            hideResizeArc();
-            resizeHoverTarget = key;
-            resizeHoverTimer = setTimeout(() => {
-                positionResizeArc(target);
-                resizeArc.classList.add('visible');
-            }, RESIZE_HOVER_DELAY);
+            resizeHoverTarget = `${target.win.id}:${target.corner.name}`;
+            positionResizeArc(target);
+            resizeArc.classList.add('visible');
         }
 
         function startArcResize(e) {
@@ -1014,7 +1027,6 @@
             resizeWin = win;
             resizeCorner = corner;
             resizeWin.classList.add('no-anim');
-            resizeArc.classList.remove('visible');
             startX = e.clientX;
             startY = e.clientY;
             startLeft = resizeWin.offsetLeft;
@@ -1043,12 +1055,18 @@
             resizeWin.style.top = `${newTop}px`;
             resizeWin.style.width = `${newW}px`;
             resizeWin.style.height = `${newH}px`;
+            positionResizeArc({ win: resizeWin, corner: {
+                name: resizeCorner,
+                rotation: { nw: 180, ne: 270, se: 0, sw: 90 }[resizeCorner],
+                cursor: resizeArc.style.cursor,
+            }});
         }
 
         function stopResize() {
             if (resizeWin) resizeWin.classList.remove('no-anim');
             resizeWin = null;
             resizeCorner = null;
+            hideResizeArc();
             document.removeEventListener('mousemove', resizeProcess);
             document.removeEventListener('mouseup', stopResize);
         }
