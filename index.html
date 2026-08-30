@@ -393,6 +393,27 @@
             cursor: se-resize; z-index: 11;
         }
 
+        .window-resize-arc {
+            position: fixed;
+            width: 34px;
+            height: 34px;
+            border: 8px solid rgba(255, 255, 255, 0.62);
+            border-left-color: transparent;
+            border-bottom-color: transparent;
+            border-radius: 50%;
+            filter: blur(0.5px);
+            opacity: 0;
+            pointer-events: none;
+            transform-origin: center;
+            transition: opacity 0.2s ease;
+            z-index: 100000;
+        }
+
+        .window-resize-arc.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
 
         /* --- ДОК БАР --- */
         .dock-container {
@@ -642,6 +663,7 @@
     </div>
 
     <div class="desktop-os" id="desktop">
+        <div class="window-resize-arc" id="windowResizeArc" onmousedown="startArcResize(event)"></div>
         
         <div class="window maximized" id="win-app1" style="display: none;">
             <div class="window-header" onmousedown="startDrag(event, 'app1')">
@@ -799,6 +821,7 @@
                 mouseY = e.clientY;
                 updateCursorTransform();
                 cursor.style.opacity = '1';
+                updateResizeArcHover(mouseX, mouseY);
                 
                 if (aiSelecting) handleAiSelection(e);
             });
@@ -845,9 +868,81 @@
 
         // --- УПРАВЛЕНИЕ ОКНАМИ ---
         let dragWin = null, resizeWin = null;
-        let offX, offY, startW, startH, startX, startY;
+        let offX, offY, startW, startH, startX, startY, startLeft, startTop, resizeCorner;
         const MIN_W = 320, MIN_H = 220;
+        const RESIZE_HOVER_DELAY = 1100;
+        const RESIZE_HOVER_DISTANCE = 34;
+        let resizeHoverTimer = null, resizeHoverTarget = null;
         let topWindowZIndex = 10;
+        const resizeArc = document.getElementById('windowResizeArc');
+
+
+        function getResizeCornerAt(x, y) {
+            const windows = [...document.querySelectorAll('.window.active-win:not(.maximized)')]
+                .sort((a, b) => (parseInt(b.style.zIndex || '0', 10) || 0) - (parseInt(a.style.zIndex || '0', 10) || 0));
+            for (const win of windows) {
+                const rect = win.getBoundingClientRect();
+                const corners = [
+                    { name: 'nw', x: rect.left, y: rect.top, rotation: 180, cursor: 'nwse-resize' },
+                    { name: 'ne', x: rect.right, y: rect.top, rotation: 270, cursor: 'nesw-resize' },
+                    { name: 'se', x: rect.right, y: rect.bottom, rotation: 0, cursor: 'nwse-resize' },
+                    { name: 'sw', x: rect.left, y: rect.bottom, rotation: 90, cursor: 'nesw-resize' },
+                ];
+                const corner = corners.find(item => Math.hypot(x - item.x, y - item.y) <= RESIZE_HOVER_DISTANCE);
+                if (corner) return { win, corner };
+            }
+            return null;
+        }
+
+        function positionResizeArc(target) {
+            const offset = 12;
+            const arcSize = 34;
+            const rect = target.win.getBoundingClientRect();
+            const positions = {
+                nw: { left: rect.left - arcSize - offset, top: rect.top - arcSize - offset },
+                ne: { left: rect.right + offset, top: rect.top - arcSize - offset },
+                se: { left: rect.right + offset, top: rect.bottom + offset },
+                sw: { left: rect.left - arcSize - offset, top: rect.bottom + offset },
+            };
+            const pos = positions[target.corner.name];
+            resizeArc.style.left = `${pos.left}px`;
+            resizeArc.style.top = `${pos.top}px`;
+            resizeArc.style.transform = `rotate(${target.corner.rotation}deg)`;
+            resizeArc.style.cursor = target.corner.cursor;
+            resizeArc.dataset.appId = target.win.id.replace(/^win-/, '');
+            resizeArc.dataset.corner = target.corner.name;
+        }
+
+        function hideResizeArc() {
+            clearTimeout(resizeHoverTimer);
+            resizeHoverTimer = null;
+            resizeHoverTarget = null;
+            if (!resizeWin) resizeArc.classList.remove('visible');
+        }
+
+        function updateResizeArcHover(x, y) {
+            if (dragWin || resizeWin || aiMode || aiSelecting) return hideResizeArc();
+            const target = getResizeCornerAt(x, y);
+            if (!target) return hideResizeArc();
+            const key = `${target.win.id}:${target.corner.name}`;
+            if (resizeHoverTarget === key) {
+                if (resizeArc.classList.contains('visible')) positionResizeArc(target);
+                return;
+            }
+            hideResizeArc();
+            resizeHoverTarget = key;
+            resizeHoverTimer = setTimeout(() => {
+                positionResizeArc(target);
+                resizeArc.classList.add('visible');
+            }, RESIZE_HOVER_DELAY);
+        }
+
+        function startArcResize(e) {
+            const appId = resizeArc.dataset.appId;
+            const corner = resizeArc.dataset.corner;
+            if (!appId || !corner) return;
+            startResize(e, appId, corner);
+        }
 
         function bringWindowToFront(win) {
             if (!win) return;
@@ -878,6 +973,7 @@
                 mouseY = frameRect.top + event.data.y;
                 updateCursorTransform();
                 cursor.style.opacity = '1';
+                updateResizeArcHover(mouseX, mouseY);
             }
 
             if (event.data.event === 'pointerleave') cursor.style.opacity = '0';
@@ -909,15 +1005,20 @@
             document.removeEventListener('mouseup', stopDrag);
         }
 
-        function startResize(e, appId) {
+        function startResize(e, appId, corner = 'se') {
             e.stopPropagation();
             e.preventDefault();
             const win = document.getElementById(`win-${appId}`);
             if (win.classList.contains('maximized')) return;
+            bringWindowToFront(win);
             resizeWin = win;
+            resizeCorner = corner;
             resizeWin.classList.add('no-anim');
+            resizeArc.classList.remove('visible');
             startX = e.clientX;
             startY = e.clientY;
+            startLeft = resizeWin.offsetLeft;
+            startTop = resizeWin.offsetTop;
             startW = parseInt(document.defaultView.getComputedStyle(resizeWin).width, 10);
             startH = parseInt(document.defaultView.getComputedStyle(resizeWin).height, 10);
             document.addEventListener('mousemove', resizeProcess);
@@ -926,15 +1027,28 @@
 
         function resizeProcess(e) {
             if (!resizeWin) return;
-            let newW = startW + (e.clientX - startX);
-            let newH = startH + (e.clientY - startY);
-            if (newW >= MIN_W && newW <= window.innerWidth) resizeWin.style.width = `${newW}px`;
-            if (newH >= MIN_H && newH <= window.innerHeight) resizeWin.style.height = `${newH}px`;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            let newLeft = startLeft;
+            let newTop = startTop;
+            let newW = resizeCorner.includes('w') ? startW - deltaX : startW + deltaX;
+            let newH = resizeCorner.includes('n') ? startH - deltaY : startH + deltaY;
+
+            newW = Math.max(MIN_W, Math.min(newW, window.innerWidth));
+            newH = Math.max(MIN_H, Math.min(newH, window.innerHeight));
+            if (resizeCorner.includes('w')) newLeft = startLeft + (startW - newW);
+            if (resizeCorner.includes('n')) newTop = startTop + (startH - newH);
+
+            resizeWin.style.left = `${newLeft}px`;
+            resizeWin.style.top = `${newTop}px`;
+            resizeWin.style.width = `${newW}px`;
+            resizeWin.style.height = `${newH}px`;
         }
 
         function stopResize() {
             if (resizeWin) resizeWin.classList.remove('no-anim');
             resizeWin = null;
+            resizeCorner = null;
             document.removeEventListener('mousemove', resizeProcess);
             document.removeEventListener('mouseup', stopResize);
         }
