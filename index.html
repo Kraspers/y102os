@@ -388,10 +388,38 @@
         .nexa-send-btn.active:active { transform: scale(0.9); }
 
         .resize-handle {
-            position: absolute; right: 0; bottom: 0;
-            width: 16px; height: 16px;
-            cursor: se-resize; z-index: 11;
+            position: absolute;
+            width: 42px;
+            height: 42px;
+            z-index: 11;
         }
+
+        .resize-handle::before {
+            content: '';
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border: 7px solid rgba(31, 31, 35, 0.78);
+            border-radius: 50%;
+            box-sizing: border-box;
+            opacity: 0;
+            transform: scale(0.55);
+            transition: opacity 0.24s ease, transform 0.24s ease;
+        }
+
+        .resize-handle.is-visible::before {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .resize-handle--top-left { top: -9px; left: -9px; cursor: nwse-resize; }
+        .resize-handle--top-left::before { top: 7px; left: 7px; border-right-color: transparent; border-bottom-color: transparent; }
+        .resize-handle--top-right { top: -9px; right: -9px; cursor: nesw-resize; }
+        .resize-handle--top-right::before { top: 7px; right: 7px; border-left-color: transparent; border-bottom-color: transparent; }
+        .resize-handle--bottom-left { bottom: -9px; left: -9px; cursor: nesw-resize; }
+        .resize-handle--bottom-left::before { bottom: 7px; left: 7px; border-right-color: transparent; border-top-color: transparent; }
+        .resize-handle--bottom-right { right: -9px; bottom: -9px; cursor: nwse-resize; }
+        .resize-handle--bottom-right::before { right: 7px; bottom: 7px; border-left-color: transparent; border-top-color: transparent; }
 
 
         /* --- ДОК БАР --- */
@@ -677,6 +705,10 @@
                     </button>
                 </div>
             </div>
+            <div class="resize-handle resize-handle--top-left" onmousedown="startResize(event, 'app1', 'top-left')"></div>
+            <div class="resize-handle resize-handle--top-right" onmousedown="startResize(event, 'app1', 'top-right')"></div>
+            <div class="resize-handle resize-handle--bottom-left" onmousedown="startResize(event, 'app1', 'bottom-left')"></div>
+            <div class="resize-handle resize-handle--bottom-right" onmousedown="startResize(event, 'app1', 'bottom-right')"></div>
         </div>
 
         <div class="window" id="win-app2">
@@ -698,7 +730,10 @@
                 <iframe src="/proxy?url=https%3A%2F%2Fwww.google.com%2F" style="flex: 1; width: 100%; border: none;" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
                 <div class="app-loading-overlay" aria-hidden="true"></div>
             </div>
-            <div class="resize-handle" onmousedown="startResize(event, 'app2')"></div>
+            <div class="resize-handle resize-handle--top-left" onmousedown="startResize(event, 'app2', 'top-left')"></div>
+            <div class="resize-handle resize-handle--top-right" onmousedown="startResize(event, 'app2', 'top-right')"></div>
+            <div class="resize-handle resize-handle--bottom-left" onmousedown="startResize(event, 'app2', 'bottom-left')"></div>
+            <div class="resize-handle resize-handle--bottom-right" onmousedown="startResize(event, 'app2', 'bottom-right')"></div>
         </div>
 
         <div class="dock-container">
@@ -845,7 +880,8 @@
 
         // --- УПРАВЛЕНИЕ ОКНАМИ ---
         let dragWin = null, resizeWin = null;
-        let offX, offY, startW, startH, startX, startY;
+        let offX, offY, startW, startH, startX, startY, startLeft, startTop, resizeCorner;
+        const resizeHandleTimers = new WeakMap();
         const MIN_W = 320, MIN_H = 220;
         let topWindowZIndex = 10;
 
@@ -909,15 +945,20 @@
             document.removeEventListener('mouseup', stopDrag);
         }
 
-        function startResize(e, appId) {
+        function startResize(e, appId, corner = 'bottom-right') {
+            if (e.button !== 0) return;
             e.stopPropagation();
             e.preventDefault();
             const win = document.getElementById(`win-${appId}`);
             if (win.classList.contains('maximized')) return;
+            bringWindowToFront(win);
             resizeWin = win;
+            resizeCorner = corner;
             resizeWin.classList.add('no-anim');
             startX = e.clientX;
             startY = e.clientY;
+            startLeft = resizeWin.offsetLeft;
+            startTop = resizeWin.offsetTop;
             startW = parseInt(document.defaultView.getComputedStyle(resizeWin).width, 10);
             startH = parseInt(document.defaultView.getComputedStyle(resizeWin).height, 10);
             document.addEventListener('mousemove', resizeProcess);
@@ -926,18 +967,49 @@
 
         function resizeProcess(e) {
             if (!resizeWin) return;
-            let newW = startW + (e.clientX - startX);
-            let newH = startH + (e.clientY - startY);
-            if (newW >= MIN_W && newW <= window.innerWidth) resizeWin.style.width = `${newW}px`;
-            if (newH >= MIN_H && newH <= window.innerHeight) resizeWin.style.height = `${newH}px`;
+            const fromLeft = resizeCorner.includes('left');
+            const fromTop = resizeCorner.includes('top');
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            const newW = startW + (fromLeft ? -deltaX : deltaX);
+            const newH = startH + (fromTop ? -deltaY : deltaY);
+            const newLeft = startLeft + deltaX;
+            const newTop = startTop + deltaY;
+
+            if (newW >= MIN_W && newW <= window.innerWidth && (!fromLeft || newLeft >= 0)) {
+                resizeWin.style.width = `${newW}px`;
+                if (fromLeft) resizeWin.style.left = `${newLeft}px`;
+            }
+            if (newH >= MIN_H && newH <= window.innerHeight && (!fromTop || newTop >= 0)) {
+                resizeWin.style.height = `${newH}px`;
+                if (fromTop) resizeWin.style.top = `${newTop}px`;
+            }
         }
 
         function stopResize() {
             if (resizeWin) resizeWin.classList.remove('no-anim');
             resizeWin = null;
+            resizeCorner = null;
             document.removeEventListener('mousemove', resizeProcess);
             document.removeEventListener('mouseup', stopResize);
         }
+
+        function setupResizeHandles(scope = document) {
+            scope.querySelectorAll('.resize-handle').forEach(handle => {
+                if (handle.dataset.resizeReady) return;
+                handle.dataset.resizeReady = 'true';
+                handle.addEventListener('mouseenter', () => {
+                    const timer = window.setTimeout(() => handle.classList.add('is-visible'), 1000);
+                    resizeHandleTimers.set(handle, timer);
+                });
+                handle.addEventListener('mouseleave', () => {
+                    window.clearTimeout(resizeHandleTimers.get(handle));
+                    handle.classList.remove('is-visible');
+                });
+            });
+        }
+
+        setupResizeHandles();
 
         function handleDockClick(appId) {
             const win = document.getElementById(`win-${appId}`);
@@ -1339,9 +1411,13 @@
                     <iframe src="${proxyUrl}" style="flex: 1; width: 100%; border: none;" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
                     <div class="app-loading-overlay" aria-hidden="true"></div>
                 </div>
-                <div class="resize-handle" onmousedown="startResize(event, '${appId}')"></div>
+                <div class="resize-handle resize-handle--top-left" onmousedown="startResize(event, '${appId}', 'top-left')"></div>
+                <div class="resize-handle resize-handle--top-right" onmousedown="startResize(event, '${appId}', 'top-right')"></div>
+                <div class="resize-handle resize-handle--bottom-left" onmousedown="startResize(event, '${appId}', 'bottom-left')"></div>
+                <div class="resize-handle resize-handle--bottom-right" onmousedown="startResize(event, '${appId}', 'bottom-right')"></div>
             `;
             desktop.appendChild(win);
+            setupResizeHandles(win);
 
             // Скрытый (пока не открыт) элемент дока — появится плавно при первом открытии
             const dockItem = document.createElement('div');
