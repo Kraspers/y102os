@@ -80,7 +80,21 @@ function rewriteHtmlUrls(html, target, proxyOrigin) {
 
 function injectNavigation(html, target) {
   const base = `<base href="${target.href}">`;
-  const script = `<script>(function(){const p=location.origin+'/proxy?url=';const proxy=v=>{try{const url=new URL(v,document.baseURI);return /^https?:$/.test(url.protocol)?p+encodeURIComponent(url.href):v}catch{return v}};const navigate=v=>{location.href=proxy(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=proxy(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};for(const method of ['assign','replace']){const original=Location.prototype[method];if(original)Location.prototype[method]=function(url){return original.call(this,proxy(url))}}const fetch=window.fetch;window.fetch=(input,init)=>{if(typeof input==='string'||input instanceof URL)return fetch(proxy(input),init);if(input instanceof Request)return fetch(new Request(proxy(input.url),input),init);return fetch(input,init)};const open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...args){return open.call(this,method,proxy(url),...args)};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
+  const script = `<script>(function(){
+    const p=location.origin+'/proxy?url=';
+    const proxy=v=>{try{const url=new URL(v,document.baseURI);return /^https?:$/.test(url.protocol)?p+encodeURIComponent(url.href):v}catch{return v}};
+    const notify=loading=>{if(window.parent!==window)window.parent.postMessage({type:'yos-proxy-loading',loading},location.origin)};
+    const navigate=v=>{notify(true);location.href=proxy(v)};
+    const nativeSubmit=HTMLFormElement.prototype.submit;
+    document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);
+    document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=proxy(f.action);notify(true);nativeSubmit.call(f)},true);
+    HTMLFormElement.prototype.submit=function(){this.target='_self';this.action=proxy(this.action);notify(true);return nativeSubmit.call(this)};
+    window.open=(url)=>{if(url)navigate(url);return window};
+    for(const method of ['assign','replace']){const original=Location.prototype[method];if(original)Location.prototype[method]=function(url){notify(true);return original.call(this,proxy(url))}};
+    const fetch=window.fetch;window.fetch=(input,init)=>{if(typeof input==='string'||input instanceof URL)return fetch(proxy(input),init);if(input instanceof Request)return fetch(new Request(proxy(input.url),input),init);return fetch(input,init)};
+    const open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...args){return open.call(this,method,proxy(url),...args)};
+    if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none!important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true);notify(true);window.addEventListener('load',()=>notify(false),{once:true})}
+  })();</script>`;
   if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${base}${script}`);
   return `${base}${script}${html}`;
 }
