@@ -152,6 +152,7 @@
             width: 100% !important;
             height: 100% !important;
             border-radius: 0;
+            z-index: 99999 !important;
         }
 
         .window.maximized {
@@ -402,6 +403,8 @@
             width: 72px; height: 48px; border-radius: 24px;
             background: rgba(255, 255, 255, 0.85);
         }
+
+        .dock-item.custom-dock-item:not(.revealed) { display: none; }
 
         .dock-item:active { transform: scale(0.8) !important; }
 
@@ -916,6 +919,11 @@
             const dockItem = document.getElementById(`dock-${appId}`);
 
             if (!win.classList.contains('active-win')) {
+                if (win.dataset.reloadOnOpen === 'true') {
+                    const frame = win.querySelector('iframe');
+                    if (frame) frame.src = `/proxy?url=${encodeURIComponent(win.dataset.loadUrl)}`;
+                    delete win.dataset.reloadOnOpen;
+                }
                 win.style.display = 'flex';
                 setTimeout(() => win.classList.add('active-win'), 10);
                 bringWindowToFront(win);
@@ -951,6 +959,7 @@
             if (appId !== 'app1') win.classList.remove('maximized');
             dockItem.classList.remove('open');
             dockItem.classList.remove('minimized');
+            if (win.querySelector('iframe')) win.dataset.reloadOnOpen = 'true';
             setTimeout(() => { if(!win.classList.contains('active-win')) win.style.display = 'none'; }, 300);
         }
 
@@ -1320,7 +1329,7 @@
 
             // Скрытый (пока не открыт) элемент дока — появится плавно при первом открытии
             const dockItem = document.createElement('div');
-            dockItem.className = 'dock-item';
+            dockItem.className = 'dock-item custom-dock-item';
             dockItem.id = `dock-${appId}`;
             dockItem.style.width = '0px';
             dockItem.style.opacity = '0';
@@ -1353,10 +1362,11 @@
             closeWindow(appId);
             const item = document.getElementById(`dock-${appId}`);
             if (item) {
-                item.classList.remove('revealed', 'open', 'minimized');
+                item.classList.remove('open', 'minimized');
                 item.style.overflow = 'hidden';
                 item.style.width = '0px';
                 item.style.opacity = '0';
+                setTimeout(() => item.classList.remove('revealed'), 350);
             }
         }
 

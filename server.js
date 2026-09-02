@@ -2,6 +2,7 @@ const http = require('node:http');
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const root = __dirname;
 const port = Number(process.env.PORT) || 3000;
@@ -18,15 +19,61 @@ function proxyUrl(url) {
   return `/proxy?url=${encodeURIComponent(url)}`;
 }
 
+function decodeHtml(body, contentEncoding) {
+  try {
+    switch (String(contentEncoding || '').toLowerCase()) {
+      case 'br': return zlib.brotliDecompressSync(body);
+      case 'gzip': return zlib.gunzipSync(body);
+      case 'deflate': return zlib.inflateSync(body);
+      default: return body;
+    }
+  } catch {
+    return body;
+  }
+}
+
 function isAllowedTarget(target) {
   if (!['http:', 'https:'].includes(target.protocol)) return false;
   const host = target.hostname.toLowerCase();
   return host !== 'localhost' && host !== '::1' && host !== '127.0.0.1' && !host.endsWith('.localhost');
 }
 
+function getProxiedRoute(req, requestUrl) {
+  try {
+    const referer = new URL(req.headers.referer);
+    if (referer.pathname !== '/proxy') return null;
+    const target = new URL(referer.searchParams.get('url'));
+    return new URL(`${requestUrl.pathname}${requestUrl.search}`, target);
+  } catch {
+    return null;
+  }
+}
+
+function proxyCookies(cookies) {
+  return cookies.map(cookie => cookie
+    .replace(/;\s*domain=[^;]*/ig, '')
+    .replace(/;\s*path=[^;]*/ig, '; Path=/proxy'));
+}
+
+function proxyTargetUrl(value, target) {
+  if (!value || value.startsWith('#') || /^(?:data|blob|javascript|mailto|tel):/i.test(value)) return value;
+  try {
+    const url = new URL(value, target);
+    return isAllowedTarget(url) ? proxyUrl(url.href) : value;
+  } catch {
+    return value;
+  }
+}
+
+function rewriteHtmlUrls(html, target) {
+  return html.replace(/\b(src|href|action|poster)\s*=\s*(["'])(.*?)\2/gi, (match, name, quote, value) => {
+    return `${name}=${quote}${proxyTargetUrl(value, target)}${quote}`;
+  });
+}
+
 function injectNavigation(html, target) {
   const base = `<base href="${target.href}">`;
-  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const u=v=>p+encodeURIComponent(new URL(v,document.baseURI).href);const navigate=v=>{location.href=u(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=u(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
+  const script = `<script>(function(){const p=${JSON.stringify('/proxy?url=')};const proxy=v=>{try{const url=new URL(v,document.baseURI);return /^https?:$/.test(url.protocol)?p+encodeURIComponent(url.href):v}catch{return v}};const navigate=v=>{location.href=proxy(v)};document.addEventListener('click',e=>{const a=e.target.closest('a[href]');if(!a||a.hasAttribute('download')||e.defaultPrevented)return;e.preventDefault();navigate(a.href)},true);document.addEventListener('submit',e=>{const f=e.target;if(!f.action||e.defaultPrevented)return;e.preventDefault();f.target='_self';f.action=proxy(f.action);HTMLFormElement.prototype.submit.call(f)},true);window.open=(url)=>{if(url)navigate(url);return window};const fetch=window.fetch;window.fetch=(input,init)=>{if(typeof input==='string'||input instanceof URL)return fetch(proxy(input),init);if(input instanceof Request)return fetch(new Request(proxy(input.url),input),init);return fetch(input,init)};const open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url,...args){return open.call(this,method,proxy(url),...args)};if(window.parent!==window){const send=(event,e)=>window.parent.postMessage({type:'yos-proxy-event',event,x:e.clientX,y:e.clientY},location.origin);const style=document.createElement('style');style.id='yos-hide-system-cursor';style.textContent='*{cursor:none !important}';(document.head||document.documentElement).appendChild(style);document.addEventListener('pointermove',e=>send('pointermove',e),true);document.addEventListener('pointerdown',e=>send('pointerdown',e),true);document.addEventListener('pointerleave',e=>send('pointerleave',e),true)}})();</script>`;
   if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${base}${script}`);
   return `${base}${script}${html}`;
 }
@@ -44,7 +91,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function handleProxy(req, res, target) {
+function handleProxy(req, res, target, attempt = 0) {
   const client = target.protocol === 'https:' ? https : http;
   const headers = { ...req.headers, host: target.host, 'accept-encoding': 'identity' };
   delete headers.origin;
@@ -54,26 +101,41 @@ function handleProxy(req, res, target) {
       if (!blockedHeaders.has(name.toLowerCase())) responseHeaders[name] = value;
     }
     if (upstreamRes.headers.location) responseHeaders.location = proxyUrl(new URL(upstreamRes.headers.location, target).href);
+    if (upstreamRes.headers['set-cookie']) responseHeaders['set-cookie'] = proxyCookies(upstreamRes.headers['set-cookie']);
     const contentType = String(upstreamRes.headers['content-type'] || '');
     if (!contentType.includes('text/html')) {
+      if (upstreamRes.headers['content-encoding']) responseHeaders['content-encoding'] = upstreamRes.headers['content-encoding'];
       res.writeHead(upstreamRes.statusCode || 502, responseHeaders);
       return upstreamRes.pipe(res);
     }
     const chunks = [];
     upstreamRes.on('data', chunk => chunks.push(chunk));
     upstreamRes.on('end', () => {
+      const html = decodeHtml(Buffer.concat(chunks), upstreamRes.headers['content-encoding']).toString('utf8');
       responseHeaders['content-type'] = contentType || 'text/html; charset=utf-8';
       res.writeHead(upstreamRes.statusCode || 200, responseHeaders);
-      res.end(injectNavigation(Buffer.concat(chunks).toString('utf8'), target));
+      res.end(injectNavigation(rewriteHtmlUrls(html, target), target));
     });
   });
-  upstream.on('error', () => res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' }).end('Не удалось подключиться к сайту.'));
-  req.pipe(upstream);
+  upstream.setTimeout(20_000, () => upstream.destroy(new Error('ETIMEDOUT')));
+  upstream.on('error', error => {
+    const transient = new Set(['ECONNREFUSED', 'ECONNRESET', 'EAI_AGAIN', 'ETIMEDOUT']);
+    if (!res.headersSent && attempt === 0 && ['GET', 'HEAD'].includes(req.method) && transient.has(error.code)) {
+      return handleProxy(req, res, target, attempt + 1);
+    }
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Не удалось подключиться к сайту.');
+  });
+  if (attempt === 0) req.pipe(upstream); else upstream.end();
 }
 
 http.createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (requestUrl.pathname !== '/proxy') return serveStatic(req, res, requestUrl.pathname);
+  if (requestUrl.pathname !== '/proxy') {
+    const target = getProxiedRoute(req, requestUrl);
+    if (target && isAllowedTarget(target)) return res.writeHead(302, { location: proxyUrl(target.href) }).end();
+    return serveStatic(req, res, requestUrl.pathname);
+  }
   const value = requestUrl.searchParams.get('url');
   let target;
   try { target = new URL(value); } catch { return res.writeHead(400).end('Некорректная ссылка.'); }
